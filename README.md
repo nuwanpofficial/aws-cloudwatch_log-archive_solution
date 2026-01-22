@@ -479,11 +479,43 @@ destinations=[{cloudWatchLogsLogGroup={logGroupArn=arn:aws:logs:<REGION>:<ACCOUN
 - **Monthly Savings**: $147.23 - $147.34 (98.2% reduction)
 - **Annual Savings**: $1,766.76 - $1,768.08 (98.1% reduction)
 
+#### Cost Breakdown Without Free Tier (All Quotas Exhausted)
+
+For organizations already consuming their AWS free tier limits with other workloads, here's the actual cost:
+
+**Full Price Calculation (50 Log Groups, 10GB/day)**
+
+| Service | Usage | Calculation | Monthly Cost |
+|---------|-------|-------------|--------------|
+| **CloudWatch Logs Storage** | 300GB | 300GB × $0.50/GB | $150.00 |
+| **S3 Standard Storage** | 300GB archive | 300GB × $0.023/GB | $6.90 |
+| **S3 PUT Requests** | 1,500 requests | 1,500 × $0.005/1000 | $0.0075 |
+| **Step Functions** | 15,000 state transitions | 15,000 ÷ 1000 × $0.025 | $0.38 |
+| **CloudWatch Logs Export** | 1,500 export tasks | 1,500 × $0.005 | $7.50 |
+| **Lambda Invocations** | 30 invocations, 128MB, 100ms | 30 × $0.0000002 | $0.000006 |
+| **Lambda Duration** | 30 × 100ms × 128MB | Compute-GB-seconds | $0.000001 |
+| **SNS Notifications** | 2 notifications | 2 × $0.50/1000 | $0.001 |
+| **Data Transfer** | Same region | 0GB cross-region | $0.00 |
+| **TOTAL WITHOUT SOLUTION** | CloudWatch Logs only | | **$150.00/month** |
+| **TOTAL WITH SOLUTION (S3)** | All components | | **$14.79/month** |
+| **WITH S3 Lifecycle to Glacier** | After 90 days | 67GB S3 + 233GB Glacier | **$3.58/month** |
+
+**Cost Comparison Without Free Tier Benefits:**
+
+| Scenario | Monthly Cost | Annual Cost | Savings vs CloudWatch |
+|----------|--------------|-------------|----------------------|
+| A: CloudWatch Logs Only | $150.00 | $1,800.00 | Baseline |
+| B: This Solution (S3 Standard) | $14.79 | $177.48 | $135.21/mo (90.1%) |
+| C: Solution + S3 Glacier Lifecycle | $3.58 | $42.96 | $146.42/mo (97.6%) |
+
+**Key Takeaway:** Even without any free tier benefits, this solution reduces log storage costs by **90-98%** depending on your lifecycle policy configuration.
+
 **Key Savings:**
 - Without this solution: $150/month ongoing in CloudWatch Logs
-- With this solution: $6.79-$6.90/month in S3 Standard (95-96% reduction)
-- With S3 lifecycle to Glacier: $0.93/month (99.4% reduction)
-- Step Functions always-free tier covers ~27% of monthly state transitions
+- With this solution: $6.79-$6.90/month in S3 Standard (95-96% reduction with free tier)
+- Without free tier: $14.79/month in S3 Standard (90.1% reduction)
+- With S3 lifecycle to Glacier: $0.93/month (99.4% reduction with free tier) or $3.58/month (97.6% reduction without free tier)
+- Step Functions always-free tier covers ~27% of monthly state transitions when available
 
 **Cost Optimization Tips:**
 1. **Implement S3 Lifecycle Policies**: Transition to Glacier after compliance warm-retention period
