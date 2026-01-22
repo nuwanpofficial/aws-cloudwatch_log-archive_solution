@@ -1,0 +1,266 @@
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "Parallel",
+  "States": {
+    "Parallel": {
+      "Type": "Parallel",
+      "Next": "MapCreateExports",
+      "Branches": [
+        {
+          "StartAt": "GetLogGroups",
+          "States": {
+            "GetLogGroups": {
+              "Type": "Task",
+              "Arguments": {
+                "LogGroupNamePrefix": "/ec2/"
+              },
+              "Resource": "arn:aws:states:::aws-sdk:cloudwatchlogs:describeLogGroups",
+              "Comment": "Get the cldlrn EC2 Log Groups",
+              "Output": {
+                "LogGroupName": "{% $states.result %}"
+              },
+              "Assign": {
+                "LogGroupNames": "{% $states.result.LogGroups[*].LogGroupName %}"
+              },
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "Lambda Invoke",
+          "States": {
+            "Lambda Invoke": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Output": "{% $states.result.Payload %}",
+              "Arguments": {
+                "FunctionName": "arn:aws:lambda:<REGION>:<ACCOUNT_ID>:function:cldlrn-prd-data_transform-lambda-apse1:$LATEST"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": [
+                    "Lambda.ServiceException",
+                    "Lambda.AWSLambdaException",
+                    "Lambda.SdkClientException",
+                    "Lambda.TooManyRequestsException"
+                  ],
+                  "IntervalSeconds": 1,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2,
+                  "JitterStrategy": "FULL"
+                }
+              ],
+              "End": true
+            }
+          }
+        }
+      ],
+      "Assign": {
+        "todays_iso": "{% $states.result.today %}",
+        "yesterday_iso": "{% $states.result.yesterday %}",
+        "LogGroupNames": "{% $states.result.LogGroupName.LogGroups[*].LogGroupName %}",
+        "day_path": "{% $states.result.yesterday_path %}"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "BackoffRate": 2,
+          "IntervalSeconds": 10,
+          "MaxAttempts": 3,
+          "Comment": "RetryState",
+          "JitterStrategy": "FULL"
+        }
+      ]
+    },
+    "MapCreateExports": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "TransformRequiredValues",
+        "States": {
+          "TransformRequiredValues": {
+            "Type": "Pass",
+            "Next": "ExportStatusCheck",
+            "Assign": {
+              "ExportGroup": "{% $states.input.CurrentGroup %}",
+              "ExportPath": "{% $states.input.ModifyPath & '/' & $day_path %}",
+              "S3Name": "{% $states.input.S3Name %}",
+              "today_mills": "{% $toMillis($todays_iso) %}",
+              "yesterday_mills": "{% $toMillis($yesterday_iso) %}"
+            }
+          },
+          "ExportStatusCheck": {
+            "Type": "Task",
+            "Arguments": {},
+            "Resource": "arn:aws:states:::aws-sdk:cloudwatchlogs:describeExportTasks",
+            "Next": "CheckPendingTasks",
+            "Assign": {
+              "ExportStatus": "{% $states.result.ExportTasks[*].Status.Code %}"
+            }
+          },
+          "CheckPendingTasks": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Condition": "{% \"PENDING\" in $ExportStatus %}",
+                "Next": "WaitForPreviousExport"
+              }
+            ],
+            "Default": "WaitBeforeCreation"
+          },
+          "WaitBeforeCreation": {
+            "Type": "Wait",
+            "Seconds": 5,
+            "Next": "CreateExportTask"
+          },
+          "WaitForPreviousExport": {
+            "Type": "Wait",
+            "Seconds": 180,
+            "Next": "ExportStatusCheck",
+            "Comment": "Wait and check for Log Export Task Completion."
+          },
+          "CreateExportTask": {
+            "Type": "Task",
+            "Arguments": {
+              "Destination": "{% $S3Name %}",
+              "DestinationPrefix": "{% $ExportPath %}",
+              "From": "{% $yesterday_mills %}",
+              "LogGroupName": "{% $ExportGroup %}",
+              "To": "{% $today_mills %}"
+            },
+            "Resource": "arn:aws:states:::aws-sdk:cloudwatchlogs:createExportTask",
+            "End": true,
+            "Catch": [
+              {
+                "ErrorEquals": [
+                  "States.TaskFailed"
+                ],
+                "Comment": "Ongoing Export",
+                "Next": "WaitForPreviousExport"
+              }
+            ]
+          }
+        }
+      },
+      "Next": "MapCheckExports",
+      "MaxConcurrency": 1,
+      "ItemSelector": {
+        "CurrentGroup": "{% $states.context.Map.Item.Value%}",
+        "ModifyPath": "{% $substringAfter($states.context.Map.Item.Value, '/ec2/') %}",
+        "S3Name": "cldlrn-prd-oslogs-s3-apse1"
+      },
+      "Items": "{% $LogGroupNames %}"
+    },
+    "MapCheckExports": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "AssignTaskDetails",
+        "States": {
+          "AssignTaskDetails": {
+            "Type": "Pass",
+            "Next": "CheckExportFinalStatus",
+            "Assign": {
+              "TaskID": "{% $states.input.TaskId %}"
+            }
+          },
+          "CheckExportFinalStatus": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::aws-sdk:cloudwatchlogs:describeExportTasks",
+            "Assign": {
+              "FinalExportStatus": "{% $states.result.ExportTasks[*].Status.Code %}",
+              "CheckedTaskID": "{% $states.result.ExportTasks[*].TaskId %}"
+            },
+            "Arguments": {
+              "TaskId": "{% $TaskID %}"
+            },
+            "Next": "CheckFinalStatusAction"
+          },
+          "CheckFinalStatusAction": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Next": "CheckExportFinalStatus",
+                "Condition": "{% \"PENDING\" in $FinalExportStatus %}",
+                "Comment": "CloudWatch Log Exports are still Pending"
+              },
+              {
+                "Next": "CheckExportFinalStatus",
+                "Condition": "{% \"RUNNING\" in $FinalExportStatus %}",
+                "Comment": "CloudWatch Log Exports are still Running"
+              },
+              {
+                "Next": "SNS Publish",
+                "Condition": "{% \"FAILED\" in $FinalExportStatus %}",
+                "Comment": "CloudWatch Log Exports are Failed"
+              }
+            ],
+            "Default": "AlarmOK"
+          },
+          "AlarmOK": {
+            "Type": "Task",
+            "Arguments": {
+              "AlarmName": "cldlrn-prd-os_logexport_status-clw-alarm-apse1",
+              "StateReason": "AllExportsSucceeded",
+              "StateValue": "OK"
+            },
+            "Resource": "arn:aws:states:::aws-sdk:cloudwatch:setAlarmState",
+            "Next": "Success"
+          },
+          "Success": {
+            "Type": "Succeed"
+          },
+          "SNS Publish": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sns:publish",
+            "Arguments": {
+              "TopicArn": "arn:aws:sns:<REGION>:<ACCOUNT_ID>:cldlrn-prd-alert_sns-apse1",
+              "Message": {
+                "Reason": "EC2 Required CloudWatch Log Exports Failed",
+                "Agency": "cldlrn",
+                "Contact": "Nuwan Premaratne",
+                "FailedTaskID": "{% $CheckedTaskID %}"
+              },
+              "Subject": "cldlrn CloudWatch Log Exports Failed"
+            },
+            "Next": "AlarmFailed"
+          },
+          "AlarmFailed": {
+            "Type": "Task",
+            "Arguments": {
+              "AlarmName": "cldlrn-prd-os_logexport_status-clw-alarm-apse1",
+              "StateReason": "ExportFailed",
+              "StateValue": "ALARM"
+            },
+            "Resource": "arn:aws:states:::aws-sdk:cloudwatch:setAlarmState",
+            "Next": "Fail"
+          },
+          "Fail": {
+            "Type": "Fail",
+            "Error": "LogExport Failed"
+          }
+        }
+      },
+      "End": true,
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "States.TaskFailed"
+          ],
+          "BackoffRate": 2,
+          "MaxAttempts": 3,
+          "IntervalSeconds": 10,
+          "JitterStrategy": "FULL",
+          "Comment": "RetryState"
+        }
+      ]
+    }
+  },
+  "QueryLanguage": "JSONata"
+}
