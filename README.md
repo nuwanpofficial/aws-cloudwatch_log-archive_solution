@@ -156,7 +156,7 @@ The solution implements multiple layers of error protection:
 
 The `MaxConcurrency: 1` setting is **critical** for two reasons:
 
-1. **CloudWatch API Limits**: The service allows only a limited number of concurrent export operations per account/REGION
+1. **CloudWatch API Limits**: The service allows only a limited number of concurrent export operations per account/region
 2. **Cost Control**: Processing sequentially provides natural throttling and prevents runaway task creation if something goes wrong
 
 This trade-off exchanges speed for reliability - for example, 20 log groups take ~2 minutes to process sequentially vs potential API errors if run in parallel.
@@ -168,7 +168,7 @@ This trade-off exchanges speed for reliability - for example, 20 log groups take
 Before deploying this solution, ensure you have:
 
 **AWS Resources:**
-- [ ] AWS account with services available in `<REGION>` (Singapore REGION)
+- [ ] AWS account with services available in your region. (Here we consider Singapore as the REGION when deciding names etc)
 - [ ] S3 bucket for log storage (the solution uses `cldlrn-prd-oslogs-s3-apse1`)
 - [ ] SNS topic for alerts with active subscriptions (email, Slack, PagerDuty, etc.)
 - [ ] CloudWatch alarm configured for monitoring export status
@@ -233,7 +233,7 @@ Edit `clw-log-export-automation.json` and update these values for your environme
 **Step 2: Create the State Machine**
 
 Using AWS Console:
-1. Navigate to Step Functions in `<REGION>`
+1. Navigate to Step Functions in your specific region
 2. Click "Create state machine"
 3. Choose "Write your workflow in code"
 4. **Important**: Set "Type" to "Standard" and "Query Language" to "JSONata"
@@ -249,7 +249,7 @@ aws stepfunctions create-state-machine \
   --definition file://clw-log-export-automation.json \
   --role-arn arn:aws:iam::<ACCOUNT_ID>:role/StepFunctionsExportRole \
   --type STANDARD \
-  --<REGION> <REGION>
+  --REGION <REGION>
 ```
 
 **Step 3: Configure Scheduling (Optional but Recommended)**
@@ -321,7 +321,7 @@ When the workflow executes successfully:
 Set up billing alerts for:
 - Step Functions state transitions (should be predictable based on log group count)
 - S3 PUT requests (one per exported log group per day)
-- Data transfer out (should be minimal if logs stay in same REGION)
+- Data transfer out (should be minimal if logs stay in same region)
 
 #### When Things Go Wrong
 
@@ -339,7 +339,7 @@ Set up billing alerts for:
 4. Check the export task status in CloudWatch Logs console
 5. Common causes:
    - S3 bucket permissions issue
-   - S3 bucket doesn't exist or wrong REGION
+   - S3 bucket doesn't exist or wrong region
    - Log group deleted during export
    - Encryption key access denied
 
@@ -425,7 +425,7 @@ destinations=[{cloudWatchLogsLogGroup={logGroupArn=arn:aws:logs:<REGION>:<ACCOUN
 | **CloudWatch Logs Export** | 50 tasks/day × 30 days | $0.375 @ $0.005/task |
 | **Lambda** | 30 invocations, 128MB, 100ms | $0.00 (within free tier) |
 | **SNS** | ~2 notifications/month | $0.00 (within free tier) |
-| **Data Transfer** | Same REGION | $0.00 |
+| **Data Transfer** | Same Region | $0.00 |
 | **TOTAL MONTHLY** | | **~$157.44** |
 | **With S3 + Lifecycle (90d → Glacier)** | 67GB Standard, 233GB Glacier | **~$2.48/month after 3 months⁴** |
 
@@ -526,12 +526,12 @@ Only export log groups that received logs in the target time window:
 - Skip empty log groups (saves API calls and S3 storage)
 - Benefits: Lower costs, faster execution
 
-**4. Multi-<REGION> Support**
-Extend to export logs from multiple <REGION>s:
+**4. Multi-Region Support**
+Extend to export logs from multiple REGIONs:
 
-- Parameterize <REGION> in input
-- Deploy state machine in each <REGION>, or
-- Use Step Functions distributed map for cross-<REGION> coordination
+- Parameterize region in input
+- Deploy state machine in each region, or
+- Use Step Functions distributed map for cross-region coordination
 
 #### Medium-Term Enhancements (Requires Development)
 
